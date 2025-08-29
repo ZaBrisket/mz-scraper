@@ -1,0 +1,19 @@
+[build]
+  command = "npm run build"
+  publish = "web/dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  included_files = []
+
+# Route clean /api/* to the single API function
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+[dev]
+  functions = "netlify/functions"
+  publish = "web"

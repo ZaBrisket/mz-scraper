@@ -1,0 +1,22 @@
+{
+  "name": "mz-scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run -w web build"
+  },
+  "workspaces": ["web"],
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "@netlify/blobs": "^8.0.0",
+    "cheerio": "^1.0.0-rc.12",
+    "eventemitter3": "^5.0.1",
+    "jsdom": "^24.0.0",
+    "zod": "^3.23.8",
+    "openai": "^4.56.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.34.0"
+  }
+}
