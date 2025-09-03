@@ -15,7 +15,12 @@ function bad(msg: string, code = 400) { return json({ ok: false, error: msg }, {
 
 export default async (req: Request, context: Context) => {
   const url = new URL(req.url);
-  const path = url.pathname.replace(/^\/\.netlify\/functions\/api/, '') || '/';
+  // Support both Netlify function invocation styles:
+  // - /.netlify/functions/api/* (default when using functions)
+  // - /api/* via redirect/proxy during local dev
+  const path = url.pathname
+    .replace(/^\/\.netlify\/functions\/api/, '')
+    .replace(/^\/api/, '') || '/';
   const method = req.method.toUpperCase();
 
   // CORS (if you ever host SPA elsewhere; for same-origin this is harmless)
