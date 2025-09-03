@@ -4,6 +4,7 @@ import { assertUrlIsSafe } from './lib/ssrf';
 import { isAllowedByRobots } from './lib/robots';
 import { getState, putState, appendEvent, listEventsAfter } from './lib/blobs';
 import type { Job } from './lib/types';
+import { randomUUID } from 'crypto';
 
 const WEB_ORIGIN = process.env.WEB_ORIGIN || 'https://brisketscraper.com';
 const USER_AGENT = process.env.USER_AGENT || 'mz-scraper/0.1 (+https://brisketscraper.com)';
@@ -54,7 +55,7 @@ export default async (req: Request, context: Context) => {
 
     let body: z.infer<typeof Body>;
     try { body = Body.parse(await req.json()); } catch (e: any) { return bad('Invalid body'); }
-    const id = Math.random().toString(36).slice(2);
+    const id = randomUUID();
     let origin = 'about:blank';
     try { origin = new URL(body.urls[0]).origin; } catch {}
     const job: Job = { id, origin, status: 'queued', pages_seen: 0, items_emitted: 0, started_at: new Date().toISOString() };
@@ -74,7 +75,7 @@ export default async (req: Request, context: Context) => {
   }
 
   // Get job snapshot
-  const jobMatch = path.match(/^\/jobs\/([a-z0-9]+)$/i);
+  const jobMatch = path.match(/^\/jobs\/([a-z0-9-]+)$/i);
   if (method === 'GET' && jobMatch) {
     const id = jobMatch[1];
     const state = await getState(id);
@@ -83,7 +84,7 @@ export default async (req: Request, context: Context) => {
   }
 
   // Stream or poll events
-  const evMatch = path.match(/^\/jobs\/([a-z0-9]+)\/events$/i);
+  const evMatch = path.match(/^\/jobs\/([a-z0-9-]+)\/events$/i);
   if (evMatch && method === 'GET') {
     const id = evMatch[1];
     const from = parseInt(url.searchParams.get('from') || '0', 10);
@@ -123,7 +124,7 @@ export default async (req: Request, context: Context) => {
 
 
   // Job controls
-  const ctrlPause = path.match(/^\/jobs\/([a-z0-9]+)\/pause$/i);
+  const ctrlPause = path.match(/^\/jobs\/([a-z0-9-]+)\/pause$/i);
   if (method === 'POST' && ctrlPause) {
     const id = ctrlPause[1];
     const state = await getState(id);
@@ -133,7 +134,7 @@ export default async (req: Request, context: Context) => {
     await appendEvent(id, { type: 'log', at: new Date().toISOString(), level: 'info', msg: 'Job paused' });
     return json({ ok: true }, { headers: corsHeaders });
   }
-  const ctrlResume = path.match(/^\/jobs\/([a-z0-9]+)\/resume$/i);
+  const ctrlResume = path.match(/^\/jobs\/([a-z0-9-]+)\/resume$/i);
   if (method === 'POST' && ctrlResume) {
     const id = ctrlResume[1];
     const state = await getState(id);
@@ -143,7 +144,7 @@ export default async (req: Request, context: Context) => {
     await appendEvent(id, { type: 'log', at: new Date().toISOString(), level: 'info', msg: 'Job resumed' });
     return json({ ok: true }, { headers: corsHeaders });
   }
-  const ctrlStop = path.match(/^\/jobs\/([a-z0-9]+)\/stop$/i);
+  const ctrlStop = path.match(/^\/jobs\/([a-z0-9-]+)\/stop$/i);
   if (method === 'POST' && ctrlStop) {
     const id = ctrlStop[1];
     const state = await getState(id);
