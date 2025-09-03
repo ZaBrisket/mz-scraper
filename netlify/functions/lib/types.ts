@@ -9,7 +9,7 @@ export interface SiteProfile {
 
 export interface Job {
   id: string;
-  origin: string;
+  origin?: string;
   status: 'queued' | 'running' | 'paused' | 'stopped' | 'finished' | 'error';
   started_at?: ISODate;
   finished_at?: ISODate;

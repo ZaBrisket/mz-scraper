@@ -24,7 +24,14 @@ const StartInput = z.object({
   baseDelayMs: z.number().int().min(0).max(10000).default(BASE_DELAY_MS)
 });
 
+const UrlListInput = z.object({
+  urls: z.array(z.string().url()).min(1),
+  baseDelayMs: z.number().int().min(0).max(10000).default(BASE_DELAY_MS)
+});
+
 type StartCfg = z.infer<typeof StartInput>;
+type UrlListCfg = z.infer<typeof UrlListInput>;
+type Cfg = StartCfg | UrlListCfg;
 
 async function fetchWithRetry(url: string, maxRetries: number, baseDelay: number): Promise<{ ok: boolean; status: number; html: string }> {
   let attempt = 0;
@@ -60,7 +67,8 @@ export default async (req: Request, context: Context) => {
   let payload: any = {};
   try { payload = await req.json(); } catch {}
   const jobId = String(payload.jobId || '');
-  const cfg: StartCfg = StartInput.parse(payload.config);
+  const Input = z.union([StartInput, UrlListInput]);
+  const cfg: Cfg = Input.parse(payload.config);
 
   let state = await getState(jobId);
   if (!state) return new Response(null, { status: 404 });
@@ -68,16 +76,17 @@ export default async (req: Request, context: Context) => {
   await putState(state);
   await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), msg: `Job ${jobId} started` });
 
-  const queue: string[] = [cfg.startUrl];
+  const queue: string[] = 'urls' in cfg ? [...cfg.urls] : [cfg.startUrl];
   const visited = new Set<string>();
-  let linkSelector = cfg.linkSelector || 'a';
-  const nextButtonText = cfg.nextButtonText || 'next';
+  let linkSelector = 'startUrl' in cfg ? (cfg.linkSelector || 'a') : 'a';
+  const nextButtonText = 'startUrl' in cfg ? (cfg.nextButtonText || 'next') : 'next';
   let matchesOk = 0, matchesTotal = 0;
   const hostFailures = new Map<string, number>();
 
   const baseDelay = cfg.baseDelayMs;
+  const maxPages = 'startUrl' in cfg ? cfg.maxPages : queue.length;
 
-  while (queue.length && visited.size < cfg.maxPages) {
+  while (queue.length && visited.size < maxPages) {
     // Check controls
     state = await getState(jobId);
     if (state?.status === 'stopped') break;
@@ -112,38 +121,45 @@ export default async (req: Request, context: Context) => {
       hostFailures.set(host, 0);
     }
 
-    // Preflight selector
-    const count = preflightSelector(r.html, linkSelector);
-    matchesTotal++;
-    if (count > 0) matchesOk++; else {
-      const linksSO = discoverSameOriginLinks(url, r.html);
-      if (linksSO.length) {
-        const cluster = linksSO.map(u => new URL(u).pathname.split('/').filter(Boolean).slice(0,2).join('/')).sort()[0] || '';
-        const inferredSelector = cluster ? `a[href^="/${cluster}"]` : 'a';
-        linkSelector = inferredSelector;
-        await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Preflight zero matches; fell back to ${linkSelector}` });
+    if ('startUrl' in cfg) {
+      // Preflight selector
+      const count = preflightSelector(r.html, linkSelector);
+      matchesTotal++;
+      if (count > 0) matchesOk++; else {
+        const linksSO = discoverSameOriginLinks(url, r.html);
+        if (linksSO.length) {
+          const cluster = linksSO.map(u => new URL(u).pathname.split('/').filter(Boolean).slice(0,2).join('/')).sort()[0] || '';
+          const inferredSelector = cluster ? `a[href^="/${cluster}"]` : 'a';
+          linkSelector = inferredSelector;
+          await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Preflight zero matches; fell back to ${linkSelector}` });
+        }
       }
+
+      // Extract item & emit
+      const item = { job_id: jobId, url, ...extractMainContent(url, r.html) };
+      await appendItem(jobId, item as any);
+      await appendEvent(jobId, { type: 'item', at: new Date().toISOString(), item } as any);
+
+      // Enqueue links
+      const { load } = await import('cheerio');
+      const $ = load(r.html);
+      $(linkSelector).each((_, a) => {
+        const href = $(a).attr('href'); if (!href) return;
+        try {
+          const nxt = new URL(href, url).toString();
+          const ok = cfg.sameOriginOnly ? sameOrigin(nxt, cfg.startUrl) : true;
+          if (ok && !visited.has(nxt)) queue.push(nxt);
+        } catch {}
+      });
+      // Pagination
+      const nextUrl = detectNextUrl(url, r.html, nextButtonText);
+      if (nextUrl && !visited.has(nextUrl)) queue.push(nextUrl);
+    } else {
+      // URL list mode: just extract item
+      const item = { job_id: jobId, url, ...extractMainContent(url, r.html) };
+      await appendItem(jobId, item as any);
+      await appendEvent(jobId, { type: 'item', at: new Date().toISOString(), item } as any);
     }
-
-    // Extract item & emit
-    const item = { job_id: jobId, url, ...extractMainContent(url, r.html) };
-    await appendItem(jobId, item as any);
-    await appendEvent(jobId, { type: 'item', at: new Date().toISOString(), item } as any);
-
-    // Enqueue links
-    const { load } = await import('cheerio');
-    const $ = load(r.html);
-    $(linkSelector).each((_, a) => {
-      const href = $(a).attr('href'); if (!href) return;
-      try {
-        const nxt = new URL(href, url).toString();
-        const ok = cfg.sameOriginOnly ? sameOrigin(nxt, cfg.startUrl) : true;
-        if (ok && !visited.has(nxt)) queue.push(nxt);
-      } catch {}
-    });
-    // Pagination
-    const nextUrl = detectNextUrl(url, r.html, nextButtonText);
-    if (nextUrl && !visited.has(nextUrl)) queue.push(nextUrl);
 
     // Update state
     state = await getState(jobId);
@@ -153,8 +169,10 @@ export default async (req: Request, context: Context) => {
     await putState(state);
   }
 
-  const matchRate = matchesTotal ? (matchesOk / matchesTotal) : 1;
-  await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), msg: `Match rate: ${Math.round(matchRate*100)}%` });
+  if (matchesTotal) {
+    const matchRate = matchesOk / matchesTotal;
+    await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), msg: `Match rate: ${Math.round(matchRate*100)}%` });
+  }
   state = await getState(jobId);
   if (state) { state.status = 'finished'; state.finished_at = new Date().toISOString(); await putState(state); }
   await appendEvent(jobId, { type: 'done', at: new Date().toISOString(), items: state?.items_emitted || 0 });
