@@ -15,7 +15,12 @@ function bad(msg: string, code = 400) { return json({ ok: false, error: msg }, {
 
 export default async (req: Request, context: Context) => {
   const url = new URL(req.url);
-  const path = url.pathname.replace(/^\/\.netlify\/functions\/api/, '') || '/';
+  // Support both Netlify function invocation styles:
+  // - /.netlify/functions/api/* (default when using functions)
+  // - /api/* via redirect/proxy during local dev
+  const path = url.pathname
+    .replace(/^\/\.netlify\/functions\/api/, '')
+    .replace(/^\/api/, '') || '/';
   const method = req.method.toUpperCase();
 
   // CORS (if you ever host SPA elsewhere; for same-origin this is harmless)
@@ -51,7 +56,7 @@ export default async (req: Request, context: Context) => {
   }
 
   if (method === 'POST' && path === '/jobs') {
-    const Body = z.object({
+    const StartCfg = z.object({
       startUrl: z.string().url(),
       subPageExample: z.string().url().optional(),
       nextButtonText: z.string().optional(),
@@ -60,10 +65,20 @@ export default async (req: Request, context: Context) => {
       maxPages: z.number().int().min(1).max(500).default(50),
       baseDelayMs: z.number().int().min(0).max(10000).default(1000)
     });
+    const UrlListCfg = z.object({
+      urls: z.array(z.string().url()).min(1),
+      baseDelayMs: z.number().int().min(0).max(10000).default(1000)
+    });
+    const Body = z.union([StartCfg, UrlListCfg]);
+
     let body: z.infer<typeof Body>;
     try { body = Body.parse(await req.json()); } catch (e: any) { return bad('Invalid body'); }
     const id = Math.random().toString(36).slice(2);
-    const origin = new URL(body.startUrl).origin;
+    let origin = 'startUrl' in body ? new URL(body.startUrl).origin : '';
+    if ('urls' in body) {
+      try { origin = new URL(body.urls[0]).origin; }
+      catch { origin = 'about:blank'; }
+    }
     const job: Job = { id, origin, status: 'queued', pages_seen: 0, items_emitted: 0, started_at: new Date().toISOString() };
     await putState(job);
     await appendEvent(id, { type: 'log', at: new Date().toISOString(), msg: `Job ${id} queued` });

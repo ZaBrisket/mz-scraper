@@ -5,6 +5,7 @@ import { saveProfile, findProfile } from '../lib/siteProfiles';
 type Props = { onStarted: (jobId: string) => void };
 
 export default function JobForm({ onStarted }: Props) {
+  const [mode, setMode] = useState<'start'|'list'>('start');
   const [startUrl, setStartUrl] = useState('');
   const [subPageExample, setSubPageExample] = useState('');
   const [linkSelector, setLinkSelector] = useState('');
@@ -12,6 +13,7 @@ export default function JobForm({ onStarted }: Props) {
   const [maxPages, setMaxPages] = useState(25);
   const [sameOriginOnly, setSameOriginOnly] = useState(true);
   const [baseDelayMs, setBaseDelayMs] = useState(1000);
+  const [urlList, setUrlList] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
@@ -40,7 +42,13 @@ export default function JobForm({ onStarted }: Props) {
 
   async function handleStart() {
     setBusy(true); setMsg('Starting job...');
-    const payload = { startUrl, subPageExample, nextButtonText, linkSelector, sameOriginOnly, maxPages, baseDelayMs };
+    let payload: any;
+    if (mode === 'list') {
+      const urls = urlList.split(/\n+/).map(u => u.trim()).filter(Boolean);
+      payload = { urls, baseDelayMs };
+    } else {
+      payload = { startUrl, subPageExample, nextButtonText, linkSelector, sameOriginOnly, maxPages, baseDelayMs };
+    }
     const r = await startJob(payload);
     setBusy(false);
     if (r.ok) onStarted(r.jobId); else setMsg(r.error || 'Failed to start job');
@@ -51,40 +59,56 @@ export default function JobForm({ onStarted }: Props) {
       <h3>Start a new scrape</h3>
       <div className="row">
         <div>
-          <label>Start URL</label>
-          <input type="url" placeholder="https://example.com" value={startUrl} onChange={e => onChangeStart(e.target.value)} />
-        </div>
-        <div>
-          <label>Sub-page example (optional)</label>
-          <input type="url" placeholder="https://example.com/post/123" value={subPageExample} onChange={e => setSubPageExample(e.target.value)} />
+          <label><input type="radio" checked={mode==='start'} onChange={()=>setMode('start')} /> Start URL</label>
+          <label style={{marginLeft:'1em'}}><input type="radio" checked={mode==='list'} onChange={()=>setMode('list')} /> URL list</label>
         </div>
       </div>
+      {mode === 'start' && (
+        <div className="row">
+          <div>
+            <label>Start URL</label>
+            <input type="url" placeholder="https://example.com" value={startUrl} onChange={e => onChangeStart(e.target.value)} />
+          </div>
+          <div>
+            <label>Sub-page example (optional)</label>
+            <input type="url" placeholder="https://example.com/post/123" value={subPageExample} onChange={e => setSubPageExample(e.target.value)} />
+          </div>
+        </div>
+      )}
+      {mode === 'list' && (
+        <div className="row">
+          <div>
+            <label>URL list (one per line)</label>
+            <textarea rows={5} placeholder={"https://example.com/1\nhttps://example.org/2"} value={urlList} onChange={e => setUrlList(e.target.value)} />
+          </div>
+        </div>
+      )}
       <div className="row">
         <div>
           <label>Link selector</label>
-          <input type="text" placeholder="a[href^='/posts']" value={linkSelector} onChange={e => setLinkSelector(e.target.value)} />
+          <input type="text" placeholder="a[href^='/posts']" value={linkSelector} onChange={e => setLinkSelector(e.target.value)} disabled={mode==='list'} />
         </div>
         <div>
           <label>Next button text</label>
-          <input type="text" placeholder="next" value={nextButtonText} onChange={e => setNextButtonText(e.target.value)} />
+          <input type="text" placeholder="next" value={nextButtonText} onChange={e => setNextButtonText(e.target.value)} disabled={mode==='list'} />
         </div>
       </div>
       <div className="row">
         <div>
           <label>Max pages</label>
-          <input type="number" min={1} max={500} value={maxPages} onChange={e => setMaxPages(parseInt(e.target.value||'1', 10))} />
+          <input type="number" min={1} max={500} value={maxPages} onChange={e => setMaxPages(parseInt(e.target.value||'1', 10))} disabled={mode==='list'} />
         </div>
         <div>
           <label>Base delay (ms)</label>
           <input type="number" min={0} max={10000} value={baseDelayMs} onChange={e => setBaseDelayMs(parseInt(e.target.value||'0',10))} />
         </div>
         <div>
-          <label><input type="checkbox" checked={sameOriginOnly} onChange={e => setSameOriginOnly(e.target.checked)} /> Same-origin only</label>
+          <label><input type="checkbox" checked={sameOriginOnly} onChange={e => setSameOriginOnly(e.target.checked)} disabled={mode==='list'} /> Same-origin only</label>
         </div>
       </div>
       <div className="controls">
-        <button disabled={busy || !startUrl} onClick={handleInfer}>Pre-flight / Infer</button>
-        <button disabled={busy || !startUrl || !linkSelector} onClick={handleStart}>Start</button>
+        {mode === 'start' && <button disabled={busy || !startUrl} onClick={handleInfer}>Pre-flight / Infer</button>}
+        <button disabled={busy || (mode==='start' ? (!startUrl || !linkSelector) : urlList.split(/\n+/).map(u=>u.trim()).filter(Boolean).length===0)} onClick={handleStart}>Start</button>
         <span className="badge">{busy ? 'Working…' : 'Ready'}</span>
         <span>{msg}</span>
       </div>

@@ -9,7 +9,22 @@ export async function inferSchema(payload: any) {
   return r.json();
 }
 
-export async function startJob(payload: any) {
+export interface StartJobStart {
+  startUrl: string;
+  subPageExample?: string;
+  nextButtonText?: string;
+  linkSelector?: string;
+  sameOriginOnly?: boolean;
+  maxPages?: number;
+  baseDelayMs?: number;
+}
+
+export interface StartJobList {
+  urls: string[];
+  baseDelayMs?: number;
+}
+
+export async function startJob(payload: StartJobStart | StartJobList) {
   const r = await fetch(API_BASE + '/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
