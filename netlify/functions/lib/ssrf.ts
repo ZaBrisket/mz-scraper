@@ -24,9 +24,16 @@ export async function assertUrlIsSafe(input: string): Promise<void> {
   const host = u.hostname.toLowerCase();
   if (host === 'localhost' || host.endsWith('.local')) throw new Error('Local host blocked');
 
-  const recs = await dns.lookup(host, { all: true });
-  for (const r of recs) {
-    if (net.isIP(r.address) === 4 && isPrivateV4(r.address)) throw new Error('Private IPv4 blocked');
-    if (net.isIP(r.address) === 6 && isPrivateV6(r.address)) throw new Error('Private IPv6 blocked');
+  if (!cache.has(host)) {
+    const recs = await dns.lookup(host, { all: true });
+    let ok = true;
+    for (const r of recs) {
+      if (net.isIP(r.address) === 4 && isPrivateV4(r.address)) { ok = false; break; }
+      if (net.isIP(r.address) === 6 && isPrivateV6(r.address)) { ok = false; break; }
+    }
+    cache.set(host, ok);
   }
+  if (!cache.get(host)) throw new Error('Private IP blocked');
 }
+
+const cache = new Map<string, boolean>();

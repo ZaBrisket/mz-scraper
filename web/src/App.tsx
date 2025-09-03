@@ -17,15 +17,18 @@ export default function App() {
     if (!jobId) return;
     let stopSSE: null | (() => void) = null;
     let pollTimer: any = null;
+    let retryTimer: any = null;
+    let retryDelay = 1000;
+    let last = lastSeq;
 
     const onEvent = (type: string, ev: any) => {
       if (type === 'log') {
         setLogs((prev) => [...prev, `[${ev.at}] ${ev.level ? ev.level.toUpperCase()+': ' : ''}${ev.msg}`].slice(-1000));
-        setLastSeq((s) => s + 1);
+        setLastSeq((s) => { last = s + 1; return last; });
       }
       if (type === 'item') {
         setItems((prev) => [...prev, ev.item]);
-        setLastSeq((s) => s + 1);
+        setLastSeq((s) => { last = s + 1; return last; });
       }
       if (type === 'done') {
         setLogs((prev) => [...prev, `DONE. Items: ${ev.items}`]);
@@ -36,10 +39,10 @@ export default function App() {
       setUsingPoll(true);
       const step = async () => {
         try {
-          const r = await pollEvents(jobId, lastSeq);
+          const r = await pollEvents(jobId, last);
           if (r.ok) {
             for (const ev of r.events) onEvent(ev.type, ev);
-            setLastSeq(r.last);
+            setLastSeq(r.last); last = r.last;
           }
         } catch {}
         pollTimer = setTimeout(step, 1000);
@@ -47,14 +50,26 @@ export default function App() {
       step();
     };
 
-    stopSSE = streamEvents(jobId, lastSeq, onEvent, () => {}, () => {
-      // SSE failed — switch to long-poll
-      startPoll();
-    });
+    const startSSE = () => {
+      stopSSE = streamEvents(jobId, last, onEvent, () => {
+        setUsingPoll(false);
+        if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+        retryDelay = 1000;
+      }, () => {}, () => {
+        startPoll();
+        retryTimer = setTimeout(() => {
+          retryDelay = Math.min(retryDelay * 2, 30000);
+          startSSE();
+        }, retryDelay);
+      });
+    };
+
+    startSSE();
 
     return () => {
       stopSSE && stopSSE();
       if (pollTimer) clearTimeout(pollTimer);
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [jobId]);
 

@@ -70,7 +70,20 @@ export default async (req: Request, context: Context) => {
 
     // Invoke background function
     const invokeUrl = new URL('/.netlify/functions/run-job-background', url.origin).toString();
-    await fetch(invokeUrl, { method: 'POST', body: JSON.stringify({ jobId: id, config: body }), headers: { 'content-type': 'application/json' }});
+    let ok = false;
+    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      try {
+        const r = await fetch(invokeUrl, { method: 'POST', body: JSON.stringify({ jobId: id, config: body }), headers: { 'content-type': 'application/json' }});
+        if (r.ok) { ok = true; break; }
+      } catch {}
+      await new Promise(res => setTimeout(res, 500 * (attempt + 1)));
+    }
+    if (!ok) {
+      const state = await getState(id);
+      if (state) { state.status = 'error'; await putState(state); }
+      await appendEvent(id, { type: 'log', at: new Date().toISOString(), level: 'error', msg: 'Background invocation failed' });
+      return bad('Failed to start job', 500);
+    }
 
     return json({ ok: true, jobId: id }, { headers: corsHeaders });
   }

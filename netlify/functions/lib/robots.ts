@@ -1,14 +1,21 @@
+const cache = new Map<string, string | null>();
+
 export async function isAllowedByRobots(url: string, userAgent: string): Promise<boolean> {
   try {
     const u = new URL(url);
-    const robotsUrl = `${u.origin}/robots.txt`;
-    const res = await fetch(robotsUrl, { redirect: 'follow', headers: { 'User-Agent': userAgent } });
-    if (!res.ok) return true;
-    const text = await res.text();
+    let text = cache.get(u.origin);
+    if (text === undefined) {
+      const robotsUrl = `${u.origin}/robots.txt`;
+      const res = await fetch(robotsUrl, { redirect: 'follow', headers: { 'User-Agent': userAgent } });
+      if (!res.ok) { cache.set(u.origin, null); return true; }
+      text = await res.text();
+      cache.set(u.origin, text);
+    }
+    if (text === null) return true;
     return parseRobots(text, userAgent, u.pathname);
   } catch { return true; }
 }
-function parseRobots(content: string, ua: string, path: string): boolean {
+export function parseRobots(content: string, ua: string, path: string): boolean {
   const lines = content.split(/\r?\n/);
   let applies = false, allowed = true;
   const uaLower = ua.toLowerCase();

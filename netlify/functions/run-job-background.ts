@@ -1,6 +1,6 @@
 import type { Context } from "@netlify/functions";
 import { z } from 'zod';
-import { getState, putState, appendEvent, appendItem, putRaw } from './lib/blobs';
+import { getState, putState, appendEvent, appendItem, putRaw, getProgress, putProgress } from './lib/blobs';
 import { preflightSelector, discoverSameOriginLinks } from './lib/extract';
 import { detectNextUrl } from './lib/paginate';
 import { extractMainContent } from './lib/readability';
@@ -68,8 +68,9 @@ export default async (req: Request, context: Context) => {
   await putState(state);
   await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), msg: `Job ${jobId} started` });
 
-  const queue: string[] = [cfg.startUrl];
-  const visited = new Set<string>();
+  const progress = await getProgress(jobId);
+  const queue: string[] = progress?.queue?.length ? [...progress.queue] : [cfg.startUrl];
+  const visited = new Set<string>(progress?.visited || []);
   let linkSelector = cfg.linkSelector || 'a';
   const nextButtonText = cfg.nextButtonText || 'next';
   let matchesOk = 0, matchesTotal = 0;
@@ -85,6 +86,7 @@ export default async (req: Request, context: Context) => {
     const url = normalizeUrl(queue.shift()!);
     if (visited.has(url)) continue;
     visited.add(url);
+    await putProgress(jobId, queue, Array.from(visited));
 
     // robots + SSRF
     try { await assertUrlIsSafe(url); } catch { await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Blocked by SSRF guard: ${url}` }); continue; }
@@ -145,12 +147,15 @@ export default async (req: Request, context: Context) => {
     const nextUrl = detectNextUrl(url, r.html, nextButtonText);
     if (nextUrl && !visited.has(nextUrl)) queue.push(nextUrl);
 
+    await putProgress(jobId, queue, Array.from(visited));
+
     // Update state
     state = await getState(jobId);
     if (!state) break;
     state.pages_seen += 1;
     state.items_emitted += 1;
     await putState(state);
+    await putProgress(jobId, queue, Array.from(visited));
   }
 
   const matchRate = matchesTotal ? (matchesOk / matchesTotal) : 1;

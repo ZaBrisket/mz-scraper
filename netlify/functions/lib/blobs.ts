@@ -1,4 +1,5 @@
 import { getStore } from '@netlify/blobs';
+import crypto from 'node:crypto';
 import type { Event, Item, Job } from './types';
 
 const STORE = 'mz-scraper';
@@ -18,43 +19,40 @@ export async function getState(jobId: string): Promise<Job | null> {
 
 export async function appendEvent(jobId: string, ev: Event): Promise<number> {
   const store = getStore({ name: STORE });
-  // atomic-ish tail increment with last-write-wins: read tail, increment, write new
-  const tailKey = k(jobId, 'tail.json');
-  const current = (await store.get(tailKey, { type: 'json' })) as any || { tail: 0 };
-  const next = (current.tail || 0) + 1;
-  await store.setJSON(tailKey, { tail: next });
-  await store.setJSON(k(jobId, `events/${String(next).padStart(8,'0')}.json`), ev);
-  return next;
+  const ts = Date.now();
+  const id = `${ts}-${crypto.randomUUID()}`;
+  await store.setJSON(k(jobId, `events/${id}.json`), ev);
+  // structured log for easier debugging
+  try { console.log(JSON.stringify({ jobId, ...ev })); } catch {}
+  return ts;
 }
 
 export async function listEventsAfter(jobId: string, after: number): Promise<{ events: Event[]; last: number }> {
   const store = getStore({ name: STORE });
-  const tail = (await store.get(k(jobId, 'tail.json'), { type: 'json' })) as any || { tail: 0 };
-  const last = tail.tail || 0;
-  if (last <= after) return { events: [], last };
-  const out: Event[] = [];
-  // list supports prefix; pull in batches
   const prefix = k(jobId, 'events/');
   const list = await store.list({ prefix });
   const files = (list.blobs || []).map(b => b.key).sort();
+  const out: Event[] = [];
+  let last = after;
   for (const key of files) {
-    const seq = parseInt(key.split('/').pop()!.replace('.json',''), 10);
+    const fname = key.split('/').pop()!.replace('.json','');
+    const seq = parseInt(fname.split('-')[0], 10);
+    if (Number.isNaN(seq)) continue;
     if (seq > after) {
       const ev = await store.get(key, { type: 'json' }) as any;
       if (ev) out.push(ev as Event);
     }
+    if (seq > last) last = seq;
   }
   return { events: out, last };
 }
 
 export async function appendItem(jobId: string, item: Item): Promise<number> {
   const store = getStore({ name: STORE });
-  const tailKey = k(jobId, 'items_tail.json');
-  const current = (await store.get(tailKey, { type: 'json' })) as any || { tail: 0 };
-  const next = (current.tail || 0) + 1;
-  await store.setJSON(tailKey, { tail: next });
-  await store.setJSON(k(jobId, `items/${String(next).padStart(8,'0')}.json`), item);
-  return next;
+  const ts = Date.now();
+  const id = `${ts}-${crypto.randomUUID()}`;
+  await store.setJSON(k(jobId, `items/${id}.json`), item);
+  return ts;
 }
 
 export async function listItems(jobId: string): Promise<Item[]> {
@@ -75,4 +73,15 @@ export async function putRaw(jobId: string, url: string, html: string) {
   const store = getStore({ name: STORE });
   const safe = url.replace(/[^a-z0-9]+/gi, '_').slice(0, 180);
   await store.set(`jobs/${jobId}/raw/${safe}.html`, html);
+}
+
+export async function putProgress(jobId: string, queue: string[], visited: string[]) {
+  const store = getStore({ name: STORE });
+  await store.setJSON(k(jobId, 'progress.json'), { queue, visited });
+}
+
+export async function getProgress(jobId: string): Promise<{ queue: string[]; visited: string[] } | null> {
+  const store = getStore({ name: STORE });
+  const v = await store.get(k(jobId, 'progress.json'), { type: 'json' });
+  return (v as any) || null;
 }
