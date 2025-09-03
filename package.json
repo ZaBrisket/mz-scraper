@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run -w web build"
+    "build": "npm run -w web build",
+    "test": "vitest run"
   },
   "workspaces": ["web"],
   "dependencies": {
@@ -17,6 +18,7 @@
     "openai": "^4.56.0"
   },
   "devDependencies": {
-    "netlify-cli": "^17.34.0"
+    "netlify-cli": "^17.34.0",
+    "vitest": "^1.6.0"
   }
 }
