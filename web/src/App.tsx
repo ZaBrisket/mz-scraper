@@ -1,7 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { inferSchema, startJob, pollEvents } from './lib/api';
+import { startJob, pollEvents } from './lib/api';
 import { download, toCSV, toJSONL, toTXT } from './lib/exporters';
-import { saveProfile, findProfile } from './lib/siteProfiles';
 
 interface Item { url: string; title?: string; description?: string; author?: string; published_at?: string; text?: string; }
 
@@ -11,64 +10,16 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [lastSeq, setLastSeq] = useState(0);
 
-  const startUrlRef = useRef<HTMLInputElement>(null);
-  const subPageRef = useRef<HTMLInputElement>(null);
-  const linkSelectorRef = useRef<HTMLInputElement>(null);
-  const nextTextRef = useRef<HTMLInputElement>(null);
-  const maxPagesRef = useRef<HTMLInputElement>(null);
-  const sameOriginRef = useRef<HTMLInputElement>(null);
   const urlListRef = useRef<HTMLTextAreaElement>(null);
   const delayRef = useRef<HTMLInputElement>(null);
 
-  const hydrate = (u: string) => {
-    try {
-      const p = findProfile(new URL(u).origin);
-      if (p) {
-        if (linkSelectorRef.current) linkSelectorRef.current.value = p.link_selector;
-        if (nextTextRef.current) nextTextRef.current.value = p.next_button_text;
-      }
-    } catch {}
-  };
-
-  const onInfer = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    const payload = {
-      startUrl: startUrlRef.current?.value || '',
-      subPageExample: subPageRef.current?.value || '',
-      nextButtonText: nextTextRef.current?.value || '',
-    };
-    const r = await inferSchema(payload);
-    if (r.ok) {
-      if (linkSelectorRef.current) linkSelectorRef.current.value = r.schema.linkSelector;
-      if (nextTextRef.current) nextTextRef.current.value = r.schema.nextButtonText;
-      try {
-        saveProfile({
-          origin: new URL(payload.startUrl).origin,
-          link_selector: r.schema.linkSelector,
-          next_button_text: r.schema.nextButtonText,
-          updated_at: new Date().toISOString(),
-        });
-      } catch {}
-    }
-  };
-
   const onStart = async (e: React.FormEvent) => {
     e.preventDefault();
-    const urlList = urlListRef.current?.value.trim();
-    const payload: any = urlList
-      ? {
-          urls: urlList.split(/\n+/).map(u => u.trim()).filter(Boolean),
-          baseDelayMs: parseInt(delayRef.current?.value || '0', 10),
-        }
-      : {
-          startUrl: startUrlRef.current?.value || '',
-          subPageExample: subPageRef.current?.value || '',
-          nextButtonText: nextTextRef.current?.value || '',
-          linkSelector: linkSelectorRef.current?.value || '',
-          sameOriginOnly: !!sameOriginRef.current?.checked,
-          maxPages: parseInt(maxPagesRef.current?.value || '1', 10),
-          baseDelayMs: parseInt(delayRef.current?.value || '0', 10),
-        };
+    const urlList = urlListRef.current?.value.trim() || '';
+    const payload = {
+      urls: urlList.split(/\n+/).map(u => u.trim()).filter(Boolean),
+      baseDelayMs: parseInt(delayRef.current?.value || '0', 10),
+    };
     const r = await startJob(payload);
     if (r.ok) {
       setJobId(r.jobId);
@@ -109,16 +60,9 @@ export default function App() {
     <div>
       <h1>mz-scraper</h1>
       <form onSubmit={onStart}>
-        <div><label>Start URL<br /><input type="url" ref={startUrlRef} onBlur={e => hydrate(e.target.value)} /></label></div>
-        <div><label>Sub-page example<br /><input type="url" ref={subPageRef} /></label></div>
-        <div><label>Link selector<br /><input type="text" ref={linkSelectorRef} /></label></div>
-        <div><label>Next button text<br /><input type="text" defaultValue="next" ref={nextTextRef} /></label></div>
-        <div><label>Max pages<br /><input type="number" defaultValue={25} ref={maxPagesRef} /></label></div>
-        <div><label>Same-origin only <input type="checkbox" defaultChecked ref={sameOriginRef} /></label></div>
         <div><label>URL list<br /><textarea ref={urlListRef} rows={4}></textarea></label></div>
         <div><label>Base delay (ms)<br /><input type="number" defaultValue={1000} ref={delayRef} /></label></div>
         <div>
-          <button type="button" onClick={onInfer}>Infer</button>
           <button type="submit">Start</button>
         </div>
       </form>
