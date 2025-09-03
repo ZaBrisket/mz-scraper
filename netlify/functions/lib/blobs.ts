@@ -20,20 +20,49 @@ export async function appendEvent(jobId: string, ev: Event): Promise<number> {
   const store = getStore({ name: STORE });
   // atomic-ish tail increment with last-write-wins: read tail, increment, write new
   const tailKey = k(jobId, 'tail.json');
+  const indexKey = k(jobId, 'events/index.json');
   const current = (await store.get(tailKey, { type: 'json' })) as any || { tail: 0 };
   const next = (current.tail || 0) + 1;
+
+  // update tail and write the event file
   await store.setJSON(tailKey, { tail: next });
   await store.setJSON(k(jobId, `events/${String(next).padStart(8,'0')}.json`), ev);
+
+  // maintain an optional index of event ids
+  const rawIndex = (await store.get(indexKey, { type: 'json' })) as any;
+  const index: number[] = Array.isArray(rawIndex) ? rawIndex : (rawIndex?.ids || []);
+  index.push(next);
+  await store.setJSON(indexKey, index);
+
   return next;
 }
 
 export async function listEventsAfter(jobId: string, after: number): Promise<{ events: Event[]; last: number }> {
   const store = getStore({ name: STORE });
+  const indexKey = k(jobId, 'events/index.json');
+  const rawIndex = (await store.get(indexKey, { type: 'json' })) as any;
+
+  // If an index exists, use it to avoid directory scans
+  if (rawIndex) {
+    const ids: number[] = Array.isArray(rawIndex) ? rawIndex : (rawIndex.ids || []);
+    const last = ids.length ? ids[ids.length - 1] : 0;
+    if (last <= after) return { events: [], last };
+    const out: Event[] = [];
+    for (const id of ids) {
+      if (id > after) {
+        const key = k(jobId, `events/${String(id).padStart(8,'0')}.json`);
+        const ev = await store.get(key, { type: 'json' }) as any;
+        if (ev) out.push(ev as Event);
+      }
+    }
+    return { events: out, last };
+  }
+
+  // Fallback: scan directory if no index is present
   const tail = (await store.get(k(jobId, 'tail.json'), { type: 'json' })) as any || { tail: 0 };
   const last = tail.tail || 0;
   if (last <= after) return { events: [], last };
   const out: Event[] = [];
-  // list supports prefix; pull in batches
   const prefix = k(jobId, 'events/');
   const list = await store.list({ prefix });
   const files = (list.blobs || []).map(b => b.key).sort();
