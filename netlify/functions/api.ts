@@ -85,7 +85,12 @@ export default async (req: Request, context: Context) => {
 
     // Invoke background function
     const invokeUrl = new URL('/.netlify/functions/run-job-background', url.origin).toString();
-    await fetch(invokeUrl, { method: 'POST', body: JSON.stringify({ jobId: id, config: body }), headers: { 'content-type': 'application/json' }});
+    try {
+      const r = await fetch(invokeUrl, { method: 'POST', body: JSON.stringify({ jobId: id, config: body }), headers: { 'content-type': 'application/json' }});
+      if (!r.ok) throw new Error('Dispatch failed');
+    } catch {
+      return bad('Failed to dispatch background job', 502);
+    }
 
     return json({ ok: true, jobId: id }, { headers: corsHeaders });
   }
