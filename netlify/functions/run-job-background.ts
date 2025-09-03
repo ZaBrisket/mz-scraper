@@ -207,6 +207,7 @@ export default async (req: Request, context: Context) => {
       for (const u of toPersist) visited.add(u);
     }
     (state as any).visited = toPersist;
+    (state as any).queue = Array.from(new Set(queue));
     await putState(state);
   }
 
