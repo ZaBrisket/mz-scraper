@@ -66,9 +66,9 @@ export default function App() {
         
         <div className="card">
           <div className="controls">
-            <button disabled={!jobId} onClick={async ()=>{ if (!jobId) return; await fetch(`/api/jobs/${jobId}/pause`, { method: 'POST' }); }}>Pause</button>
-            <button disabled={!jobId} onClick={async ()=>{ if (!jobId) return; await fetch(`/api/jobs/${jobId}/resume`, { method: 'POST' }); }}>Resume</button>
-            <button disabled={!jobId} onClick={async ()=>{ if (!jobId) return; await fetch(`/api/jobs/${jobId}/stop`, { method: 'POST' }); }}>Stop</button>
+            <button disabled={!jobId} onClick={async ()=>{ if (!jobId) return; try { const r = await fetch(`/api/jobs/${jobId}/pause`, { method: 'POST' }); if (!r.ok) setLogs(l=>[...l, 'Pause failed']); } catch { setLogs(l=>[...l, 'Pause request failed']); } }}>Pause</button>
+            <button disabled={!jobId} onClick={async ()=>{ if (!jobId) return; try { const r = await fetch(`/api/jobs/${jobId}/resume`, { method: 'POST' }); if (!r.ok) setLogs(l=>[...l, 'Resume failed']); } catch { setLogs(l=>[...l, 'Resume request failed']); } }}>Resume</button>
+            <button disabled={!jobId} onClick={async ()=>{ if (!jobId) return; try { const r = await fetch(`/api/jobs/${jobId}/stop`, { method: 'POST' }); if (!r.ok) setLogs(l=>[...l, 'Stop failed']); } catch { setLogs(l=>[...l, 'Stop request failed']); } }}>Stop</button>
           </div>
         </div>
     

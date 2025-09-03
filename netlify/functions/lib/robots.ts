@@ -2,7 +2,10 @@ export async function isAllowedByRobots(url: string, userAgent: string): Promise
   try {
     const u = new URL(url);
     const robotsUrl = `${u.origin}/robots.txt`;
-    const res = await fetch(robotsUrl, { redirect: 'follow', headers: { 'User-Agent': userAgent } });
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), parseInt(process.env.REQUEST_TIMEOUT_MS || '15000', 10));
+    const res = await fetch(robotsUrl, { redirect: 'follow', headers: { 'User-Agent': userAgent }, signal: controller.signal });
+    clearTimeout(t);
     if (!res.ok) return true;
     const text = await res.text();
     return parseRobots(text, userAgent, u.pathname);

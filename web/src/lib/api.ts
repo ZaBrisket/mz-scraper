@@ -1,12 +1,21 @@
 const API_BASE = '/api';
 
+async function parseJson(r: Response) {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  try { return await r.json(); } catch { throw new Error('Invalid JSON'); }
+}
+
 export async function inferSchema(payload: any) {
-  const r = await fetch(API_BASE + '/schema', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  return r.json();
+  try {
+    const r = await fetch(API_BASE + '/schema', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await parseJson(r);
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }
 
 export interface StartJobStart {
@@ -25,17 +34,25 @@ export interface StartJobList {
 }
 
 export async function startJob(payload: StartJobStart | StartJobList) {
-  const r = await fetch(API_BASE + '/jobs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  return r.json();
+  try {
+    const r = await fetch(API_BASE + '/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await parseJson(r);
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }
 
 export async function getJob(id: string) {
-  const r = await fetch(API_BASE + `/jobs/${id}`);
-  return r.json();
+  try {
+    const r = await fetch(API_BASE + `/jobs/${id}`);
+    return await parseJson(r);
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }
 
 export function streamEvents(jobId: string, from: number, onEvent: (type: string, data: any) => void, onEnd: ()=>void, onError: ()=>void) {
@@ -55,6 +72,10 @@ export function streamEvents(jobId: string, from: number, onEvent: (type: string
 }
 
 export async function pollEvents(jobId: string, from: number) {
-  const r = await fetch(API_BASE + `/jobs/${jobId}/events?from=${from}`, { headers: { 'Accept': 'application/json' } });
-  return r.json();
+  try {
+    const r = await fetch(API_BASE + `/jobs/${jobId}/events?from=${from}`, { headers: { 'Accept': 'application/json' } });
+    return await parseJson(r);
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }

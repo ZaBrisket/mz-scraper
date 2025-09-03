@@ -13,6 +13,7 @@ const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3', 10);
 const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '15000', 10);
 const BASE_DELAY_MS = parseInt(process.env.BASE_DELAY_MS || '1000', 10);
 const ALLOW_RAW_HTML = /^true$/i.test(process.env.ALLOW_RAW_HTML || 'false');
+const CIRCUIT_BREAK_LIMIT = parseInt(process.env.CIRCUIT_BREAK_LIMIT || '3', 10);
 
 const StartInput = z.object({
   startUrl: z.string().url(),
@@ -76,7 +77,9 @@ export default async (req: Request, context: Context) => {
   await putState(state);
   await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), msg: `Job ${jobId} started` });
 
-  const queue: string[] = 'urls' in cfg ? [...cfg.urls] : [cfg.startUrl];
+  const initial = [...new Set('urls' in cfg ? cfg.urls.map(normalizeUrl) : [normalizeUrl(cfg.startUrl)])];
+  const queue: string[] = [...initial];
+  const queued = new Set<string>(queue);
   const visited = new Set<string>();
   let linkSelector = 'startUrl' in cfg ? (cfg.linkSelector || 'a') : 'a';
   const nextButtonText = 'startUrl' in cfg ? (cfg.nextButtonText || 'next') : 'next';
@@ -91,9 +94,16 @@ export default async (req: Request, context: Context) => {
     state = await getState(jobId);
     if (state?.status === 'stopped') break;
     while (state?.status === 'paused') { await new Promise(r => setTimeout(r, 750)); state = await getState(jobId); }
-    const url = normalizeUrl(queue.shift()!);
+    const url = queue.shift()!;
+    queued.delete(url);
     if (visited.has(url)) continue;
     visited.add(url);
+    const host = new URL(url).host;
+    const failCount = hostFailures.get(host) || 0;
+    if (failCount >= CIRCUIT_BREAK_LIMIT) {
+      await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Circuit open for host ${host}; skipping ${url}` });
+      continue;
+    }
 
     // robots + SSRF
     try { await assertUrlIsSafe(url); } catch { await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Blocked by SSRF guard: ${url}` }); continue; }
@@ -101,13 +111,11 @@ export default async (req: Request, context: Context) => {
     if (!allowed) { await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `robots.txt disallows: ${url}` }); continue; }
 
     // polite throttle per host
-    const host = new URL(url).host;
     const jitter = Math.floor(Math.random() * baseDelay * 0.3);
     await new Promise(r => setTimeout(r, baseDelay + jitter));
 
     const start = Date.now();
     const r = await fetchWithRetry(url, MAX_RETRIES, baseDelay);
-    const duration_ms = Date.now() - start;
 
     if (ALLOW_RAW_HTML && r.html) { try { await putRaw(jobId, url, r.html); } catch {} }
 
@@ -146,14 +154,17 @@ export default async (req: Request, context: Context) => {
       $(linkSelector).each((_, a) => {
         const href = $(a).attr('href'); if (!href) return;
         try {
-          const nxt = new URL(href, url).toString();
+          const nxt = normalizeUrl(new URL(href, url).toString());
           const ok = cfg.sameOriginOnly ? sameOrigin(nxt, cfg.startUrl) : true;
-          if (ok && !visited.has(nxt)) queue.push(nxt);
+          if (ok && !visited.has(nxt) && !queued.has(nxt)) { queue.push(nxt); queued.add(nxt); }
         } catch {}
       });
       // Pagination
       const nextUrl = detectNextUrl(url, r.html, nextButtonText);
-      if (nextUrl && !visited.has(nextUrl)) queue.push(nextUrl);
+      if (nextUrl) {
+        const nurl = normalizeUrl(nextUrl);
+        if (!visited.has(nurl) && !queued.has(nurl)) { queue.push(nurl); queued.add(nurl); }
+      }
     } else {
       // URL list mode: just extract item
       const item = { job_id: jobId, url, ...extractMainContent(url, r.html) };

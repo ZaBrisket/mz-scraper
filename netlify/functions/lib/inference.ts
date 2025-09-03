@@ -14,8 +14,17 @@ export async function inferSelectors(body: unknown) {
   await assertUrlIsSafe(startUrl);
   const allowed = await isAllowedByRobots(startUrl, process.env.USER_AGENT || 'mz-scraper/0.1');
   if (!allowed) throw new Error('Blocked by robots.txt');
-  const res = await fetch(startUrl, { redirect: 'follow', headers: { 'User-Agent': process.env.USER_AGENT || 'mz-scraper/0.1' } });
-  const html = await res.text();
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), parseInt(process.env.REQUEST_TIMEOUT_MS || '15000', 10));
+  let res: Response;
+  try {
+    res = await fetch(startUrl, { redirect: 'follow', headers: { 'User-Agent': process.env.USER_AGENT || 'mz-scraper/0.1' }, signal: controller.signal });
+  } catch {
+    throw new Error('Failed to fetch start URL');
+  } finally { clearTimeout(t); }
+  if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
+  let html: string;
+  try { html = await res.text(); } catch { throw new Error('Failed to read response'); }
 
   // Optional OpenAI path
   const apiKey = process.env.OPENAI_API_KEY;
