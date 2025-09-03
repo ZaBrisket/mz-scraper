@@ -82,7 +82,8 @@ export default async (req: Request, context: Context) => {
   const log = (msg: string, level?: 'info' | 'warn') =>
     appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level, msg: `${modeTag} ${msg}` });
 
-  await log(`Job ${jobId} started`);
+  try {
+    await log(`Job ${jobId} started`);
 
   const initial = [...new Set(isUrlList ? (cfg as UrlListCfg).urls.map(normalizeUrl) : [normalizeUrl((cfg as StartCfg).startUrl)])];
   const queue: string[] = [...initial];
@@ -196,4 +197,15 @@ export default async (req: Request, context: Context) => {
   await appendEvent(jobId, { type: 'done', at: new Date().toISOString(), items: state?.items_emitted || 0 });
 
   return new Response(null, { status: 202 });
+  } catch (err: any) {
+    const job = await getState(jobId);
+    if (job) {
+      job.status = 'error';
+      job.finished_at = new Date().toISOString();
+      await putState(job);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'error', msg: message });
+    return new Response(null, { status: 500 });
+  }
 };
