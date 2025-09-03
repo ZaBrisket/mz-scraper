@@ -14,6 +14,8 @@ const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '15000', 1
 const BASE_DELAY_MS = parseInt(process.env.BASE_DELAY_MS || '1000', 10);
 const ALLOW_RAW_HTML = /^true$/i.test(process.env.ALLOW_RAW_HTML || 'false');
 const CIRCUIT_BREAK_LIMIT = parseInt(process.env.CIRCUIT_BREAK_LIMIT || '3', 10);
+const MAX_QUEUE = parseInt(process.env.MAX_QUEUE || '5000', 10);
+const VISITED_PERSIST_LIMIT = parseInt(process.env.VISITED_PERSIST_LIMIT || '1000', 10);
 
 const StartInput = z.object({
   startUrl: z.string().url(),
@@ -87,7 +89,7 @@ export default async (req: Request, context: Context) => {
   const initial = [...new Set(isUrlList ? (cfg as UrlListCfg).urls.map(normalizeUrl) : [normalizeUrl((cfg as StartCfg).startUrl)])];
   const queue: string[] = [...initial];
   const queued = new Set<string>(queue);
-  const visited = new Set<string>();
+  const visited = new Set<string>((state as any).visited || []);
   let linkSelector = !isUrlList ? ((cfg as StartCfg).linkSelector || 'a') : 'a';
   const nextButtonText = !isUrlList ? ((cfg as StartCfg).nextButtonText || 'next') : 'next';
   let matchesOk = 0, matchesTotal = 0;
@@ -163,14 +165,26 @@ export default async (req: Request, context: Context) => {
         try {
           const nxt = normalizeUrl(new URL(href, url).toString());
           const ok = (cfg as StartCfg).sameOriginOnly ? sameOrigin(nxt, (cfg as StartCfg).startUrl) : true;
-          if (ok && !visited.has(nxt) && !queued.has(nxt)) { queue.push(nxt); queued.add(nxt); }
+          if (ok && !visited.has(nxt) && !queued.has(nxt)) {
+            if (queue.length >= MAX_QUEUE) {
+              log(`Queue limit reached; dropping ${nxt}`, 'warn');
+            } else {
+              queue.push(nxt); queued.add(nxt);
+            }
+          }
         } catch {}
       });
       // Pagination
       const nextUrl = detectNextUrl(url, r.html, nextButtonText);
       if (nextUrl) {
         const nurl = normalizeUrl(nextUrl);
-        if (!visited.has(nurl) && !queued.has(nurl)) { queue.push(nurl); queued.add(nurl); }
+        if (!visited.has(nurl) && !queued.has(nurl)) {
+          if (queue.length >= MAX_QUEUE) {
+            await log(`Queue limit reached; dropping ${nurl}`, 'warn');
+          } else {
+            queue.push(nurl); queued.add(nurl);
+          }
+        }
       }
     } else {
       // URL list mode: just extract item
@@ -184,6 +198,14 @@ export default async (req: Request, context: Context) => {
     if (!state) break;
     state.pages_seen += 1;
     state.items_emitted += 1;
+    const visitArr = Array.from(visited);
+    let toPersist = visitArr;
+    if (visitArr.length > VISITED_PERSIST_LIMIT) {
+      toPersist = visitArr.slice(-VISITED_PERSIST_LIMIT);
+      visited.clear();
+      for (const u of toPersist) visited.add(u);
+    }
+    (state as any).visited = toPersist;
     await putState(state);
   }
 
