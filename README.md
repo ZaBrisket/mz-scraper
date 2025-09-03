@@ -38,7 +38,7 @@
 - **/web** — SPA orchestrates jobs, stores site profiles locally, shows live logs/results, exports CSV/JSONL/TXT.
 - **/netlify/functions** — API endpoints:
   - `POST /api/schema` — infer selectors (OpenAI if configured; else heuristics).
-  - `POST /api/jobs` — create a job and invoke **background** crawl runner.
+  - `POST /api/jobs` — create a job and invoke **background** crawl runner. Accepts either a start URL (with link discovery) or an explicit list of URLs to fetch.
   - `GET /api/jobs/:id` — get job state + counts.
   - `GET /api/jobs/:id/events` — **SSE** stream of `log|item|done|error` (auto reconnect) or JSON long‑poll fallback.
 - **Background function** — `/ .netlify/functions/run-job-background` (15‑minute runtime) performs the crawl and writes events/items/state to **Netlify Blobs**.
