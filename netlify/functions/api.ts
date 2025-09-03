@@ -1,10 +1,9 @@
 import type { Context } from "@netlify/functions";
 import { z } from 'zod';
-import { inferSelectors, fetchWithRetry } from './lib/inference';
 import { assertUrlIsSafe } from './lib/ssrf';
 import { isAllowedByRobots } from './lib/robots';
-import { getState, putState, appendEvent, listEventsAfter, listItems } from './lib/blobs';
-import type { Job, Event, Item } from './lib/types';
+import { getState, putState, appendEvent, listEventsAfter } from './lib/blobs';
+import type { Job } from './lib/types';
 
 const WEB_ORIGIN = process.env.WEB_ORIGIN || 'https://brisketscraper.com';
 const USER_AGENT = process.env.USER_AGENT || 'mz-scraper/0.1 (+https://brisketscraper.com)';
@@ -32,50 +31,32 @@ export default async (req: Request, context: Context) => {
   if (method === 'OPTIONS') return new Response('', { status: 204, headers: corsHeaders });
 
   // Routes
-  if (method === 'POST' && path === '/schema') {
-    try {
-      const body = await req.json();
-      const schema = await inferSelectors(body);
-      return json({ ok: true, schema }, { headers: corsHeaders });
-    } catch (e: any) { return bad(String(e?.message || e)); }
-  }
-
   if (method === 'GET' && path.startsWith('/fetch')) {
     const target = url.searchParams.get('url') || '';
     try {
       await assertUrlIsSafe(target);
       const okByRobots = await isAllowedByRobots(target, USER_AGENT);
       if (!okByRobots) return bad('Blocked by robots.txt', 403);
-      const r = await fetchWithRetry(target, { redirect: 'follow', headers: { 'User-Agent': USER_AGENT } });
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const r = await fetch(target, { redirect: 'follow', headers: { 'User-Agent': USER_AGENT }, signal: controller.signal });
+      clearTimeout(t);
       const text = await r.text();
       return new Response(text, { status: r.status, headers: { 'content-type': 'text/html; charset=utf-8', ...corsHeaders } });
     } catch (e: any) { return bad(String(e?.message || e)); }
   }
 
   if (method === 'POST' && path === '/jobs') {
-    const StartCfg = z.object({
-      startUrl: z.string().url(),
-      subPageExample: z.string().url().optional(),
-      nextButtonText: z.string().optional(),
-      linkSelector: z.string().optional(),
-      sameOriginOnly: z.boolean().default(true),
-      maxPages: z.number().int().min(1).max(500).default(50),
-      baseDelayMs: z.number().int().min(0).max(10000).default(1000)
-    });
-    const UrlListCfg = z.object({
+    const Body = z.object({
       urls: z.array(z.string().url()).min(1),
       baseDelayMs: z.number().int().min(0).max(10000).default(1000)
     });
-    const Body = z.union([StartCfg, UrlListCfg]);
 
     let body: z.infer<typeof Body>;
     try { body = Body.parse(await req.json()); } catch (e: any) { return bad('Invalid body'); }
     const id = Math.random().toString(36).slice(2);
-    let origin = 'startUrl' in body ? new URL(body.startUrl).origin : '';
-    if ('urls' in body) {
-      try { origin = new URL(body.urls[0]).origin; }
-      catch { origin = 'about:blank'; }
-    }
+    let origin = 'about:blank';
+    try { origin = new URL(body.urls[0]).origin; } catch {}
     const job: Job = { id, origin, status: 'queued', pages_seen: 0, items_emitted: 0, started_at: new Date().toISOString() };
     await putState(job);
     await appendEvent(id, { type: 'log', at: new Date().toISOString(), msg: `Job ${id} queued` });

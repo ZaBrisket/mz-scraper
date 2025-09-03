@@ -26,7 +26,6 @@
    - `MAX_RETRIES=3`
    - `REQUEST_TIMEOUT_MS=15000`
    - `ALLOW_RAW_HTML=false`
-   - `OPENAI_API_KEY=...` (optional, enables AI selector inference)
 6. Set custom domain to **brisketscraper.com** in **Domains**.
 
 > Local dev: `npm i -g netlify-cli` → `netlify dev` (runs SPA + Functions).
@@ -35,13 +34,12 @@
 
 ## What’s included
 
-- **/web** — SPA orchestrates jobs, stores site profiles locally, shows live logs/results, exports CSV/JSONL/TXT.
+- **/web** — SPA orchestrates jobs, shows live logs/results, exports CSV/JSONL/TXT.
 - **/netlify/functions** — API endpoints:
-  - `POST /api/schema` — infer selectors (OpenAI if configured; else heuristics).
-  - `POST /api/jobs` — create a job and invoke **background** crawl runner. Accepts either a start URL (with link discovery) or an explicit list of URLs to fetch.
+  - `POST /api/jobs` — create a job and invoke **background** runner for a list of URLs.
   - `GET /api/jobs/:id` — get job state + counts.
   - `GET /api/jobs/:id/events` — **SSE** stream of `log|item|done|error` (auto reconnect) or JSON long‑poll fallback.
-- **Background function** — `/ .netlify/functions/run-job-background` (15‑minute runtime) performs the crawl and writes events/items/state to **Netlify Blobs**.
+- **Background function** — `/ .netlify/functions/run-job-background` (15‑minute runtime) processes the queue and writes events/items/state to **Netlify Blobs**.
 - **Politeness** — robots.txt, SSRF guard (IPv4/IPv6 private/loopback), per-host throttle with jitter, retries + backoff + `Retry-After`, circuit‑breaker on persistent 5xx/429, URL normalization/dedupe, same‑origin scoping.
 - **Extraction** — readability‑style main content + `title`, `description`, `author`, `published_at`.
 - **Headless** — behind a flag; Playwright not bundled by default (Netlify Functions are not ideal for headless browsers).
@@ -74,8 +72,8 @@ mz-scraper/
 ├─ web/                     # SPA (Vite + React + TS)
 └─ netlify/
    └─ functions/
-      ├─ api.ts            # routes /api/* (schema, jobs, events, fetch proxy)
-      ├─ run-job-background.ts  # long-running crawler
+      ├─ api.ts            # routes /api/* (jobs, events, fetch proxy)
+      ├─ run-job-background.ts  # background fetcher
       └─ lib/              # shared logic for functions
          ├─ types.ts
          ├─ url.ts
@@ -84,8 +82,7 @@ mz-scraper/
          ├─ extract.ts
          ├─ paginate.ts
          ├─ readability.ts
-         ├─ blobs.ts
-         └─ inference.ts
+         └─ blobs.ts
 ```
 
 ---

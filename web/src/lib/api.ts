@@ -5,35 +5,12 @@ async function parseJson(r: Response) {
   try { return await r.json(); } catch { throw new Error('Invalid JSON'); }
 }
 
-export async function inferSchema(payload: any) {
-  try {
-    const r = await fetch(API_BASE + '/schema', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    return await parseJson(r);
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-}
-
-export interface StartJobStart {
-  startUrl: string;
-  subPageExample?: string;
-  nextButtonText?: string;
-  linkSelector?: string;
-  sameOriginOnly?: boolean;
-  maxPages?: number;
-  baseDelayMs?: number;
-}
-
-export interface StartJobList {
+export interface StartJobPayload {
   urls: string[];
   baseDelayMs?: number;
 }
 
-export async function startJob(payload: StartJobStart | StartJobList) {
+export async function startJob(payload: StartJobPayload) {
   try {
     const r = await fetch(API_BASE + '/jobs', {
       method: 'POST',
