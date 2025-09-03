@@ -55,7 +55,6 @@ export default async (req: Request, context: Context) => {
   let payload: any = {};
   try { payload = await req.json(); } catch {}
   const jobId = String(payload.jobId || '');
-  const isUrlList = Array.isArray(payload.config?.urls);
   const cfg: Cfg = UrlListInput.parse(payload.config);
 
   let state = await getState(jobId);
@@ -83,13 +82,13 @@ export default async (req: Request, context: Context) => {
     while (state?.status === 'paused') { await new Promise(r => setTimeout(r, 750)); state = await getState(jobId); }
     const url = queue.shift()!;
     if (visited.has(url)) continue;
+    visited.add(url);
     const host = new URL(url).host;
     const failCount = hostFailures.get(host) || 0;
-    if (!isUrlList && failCount >= CIRCUIT_BREAK_LIMIT) {
+    if (failCount >= CIRCUIT_BREAK_LIMIT) {
       await log(`Circuit open for host ${host}; skipping ${url}`, 'warn');
       continue;
     }
-    visited.add(url);
 
     // robots + SSRF
     try { await assertUrlIsSafe(url); } catch { await log(`Blocked by SSRF guard: ${url}`, 'warn'); continue; }
@@ -105,14 +104,12 @@ export default async (req: Request, context: Context) => {
     if (ALLOW_RAW_HTML && r.html) { try { await putRaw(jobId, url, r.html); } catch {} }
 
     if (!r.ok) {
+      const count = (hostFailures.get(host) || 0) + 1;
+      hostFailures.set(host, count);
       await log(`Fetch failed (${r.status}) for ${url}`, 'warn');
-      if (!isUrlList) {
-        const count = (hostFailures.get(host) || 0) + 1;
-        hostFailures.set(host, count);
-        if (count >= 3) { await log(`Circuit open for host ${host}`, 'warn'); }
-      }
+      if (count >= 3) { await log(`Circuit open for host ${host}`, 'warn'); }
       continue;
-    } else if (!isUrlList) {
+    } else {
       hostFailures.set(host, 0);
     }
     const item = { job_id: jobId, url, ...extractMainContent(url, r.html) };
