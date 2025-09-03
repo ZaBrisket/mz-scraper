@@ -1,6 +1,6 @@
 import type { Context } from "@netlify/functions";
 import { z } from 'zod';
-import { inferSelectors } from './lib/inference';
+import { inferSelectors, fetchWithRetry } from './lib/inference';
 import { assertUrlIsSafe } from './lib/ssrf';
 import { isAllowedByRobots } from './lib/robots';
 import { getState, putState, appendEvent, listEventsAfter, listItems } from './lib/blobs';
@@ -46,10 +46,7 @@ export default async (req: Request, context: Context) => {
       await assertUrlIsSafe(target);
       const okByRobots = await isAllowedByRobots(target, USER_AGENT);
       if (!okByRobots) return bad('Blocked by robots.txt', 403);
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-      const r = await fetch(target, { redirect: 'follow', headers: { 'User-Agent': USER_AGENT }, signal: controller.signal });
-      clearTimeout(t);
+      const r = await fetchWithRetry(target, { redirect: 'follow', headers: { 'User-Agent': USER_AGENT } });
       const text = await r.text();
       return new Response(text, { status: r.status, headers: { 'content-type': 'text/html; charset=utf-8', ...corsHeaders } });
     } catch (e: any) { return bad(String(e?.message || e)); }
