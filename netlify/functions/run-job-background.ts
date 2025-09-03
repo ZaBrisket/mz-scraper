@@ -71,23 +71,30 @@ export default async (req: Request, context: Context) => {
   const Input = z.union([StartInput, UrlListInput]);
   const cfg: Cfg = Input.parse(payload.config);
 
+  const isUrlList = Array.isArray((cfg as any).urls);
+
   let state = await getState(jobId);
   if (!state) return new Response(null, { status: 404 });
   state.status = 'running';
   await putState(state);
-  await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), msg: `Job ${jobId} started` });
 
-  const initial = [...new Set('urls' in cfg ? cfg.urls.map(normalizeUrl) : [normalizeUrl(cfg.startUrl)])];
+  const modeTag = isUrlList ? '[url-list]' : '[crawl]';
+  const log = (msg: string, level?: 'info' | 'warn') =>
+    appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level, msg: `${modeTag} ${msg}` });
+
+  await log(`Job ${jobId} started`);
+
+  const initial = [...new Set(isUrlList ? (cfg as UrlListCfg).urls.map(normalizeUrl) : [normalizeUrl((cfg as StartCfg).startUrl)])];
   const queue: string[] = [...initial];
   const queued = new Set<string>(queue);
   const visited = new Set<string>();
-  let linkSelector = 'startUrl' in cfg ? (cfg.linkSelector || 'a') : 'a';
-  const nextButtonText = 'startUrl' in cfg ? (cfg.nextButtonText || 'next') : 'next';
+  let linkSelector = !isUrlList ? ((cfg as StartCfg).linkSelector || 'a') : 'a';
+  const nextButtonText = !isUrlList ? ((cfg as StartCfg).nextButtonText || 'next') : 'next';
   let matchesOk = 0, matchesTotal = 0;
   const hostFailures = new Map<string, number>();
 
   const baseDelay = cfg.baseDelayMs;
-  const maxPages = 'startUrl' in cfg ? cfg.maxPages : queue.length;
+  const maxPages = !isUrlList ? (cfg as StartCfg).maxPages : queue.length;
 
   while (queue.length && visited.size < maxPages) {
     // Check controls
@@ -101,14 +108,14 @@ export default async (req: Request, context: Context) => {
     const host = new URL(url).host;
     const failCount = hostFailures.get(host) || 0;
     if (failCount >= CIRCUIT_BREAK_LIMIT) {
-      await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Circuit open for host ${host}; skipping ${url}` });
+      await log(`Circuit open for host ${host}; skipping ${url}`, 'warn');
       continue;
     }
 
     // robots + SSRF
-    try { await assertUrlIsSafe(url); } catch { await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Blocked by SSRF guard: ${url}` }); continue; }
+    try { await assertUrlIsSafe(url); } catch { await log(`Blocked by SSRF guard: ${url}`, 'warn'); continue; }
     const allowed = await isAllowedByRobots(url, USER_AGENT);
-    if (!allowed) { await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `robots.txt disallows: ${url}` }); continue; }
+    if (!allowed) { await log(`robots.txt disallows: ${url}`, 'warn'); continue; }
 
     // polite throttle per host
     const jitter = Math.floor(Math.random() * baseDelay * 0.3);
@@ -122,14 +129,14 @@ export default async (req: Request, context: Context) => {
     if (!r.ok) {
       const count = (hostFailures.get(host) || 0) + 1;
       hostFailures.set(host, count);
-      await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Fetch failed (${r.status}) for ${url}` });
-      if (count >= 3) { await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Circuit open for host ${host}` }); }
+      await log(`Fetch failed (${r.status}) for ${url}`, 'warn');
+      if (count >= 3) { await log(`Circuit open for host ${host}`, 'warn'); }
       continue;
     } else {
       hostFailures.set(host, 0);
     }
 
-    if ('startUrl' in cfg) {
+    if (!isUrlList) {
       // Preflight selector
       const count = preflightSelector(r.html, linkSelector);
       matchesTotal++;
@@ -139,7 +146,7 @@ export default async (req: Request, context: Context) => {
           const cluster = linksSO.map(u => new URL(u).pathname.split('/').filter(Boolean).slice(0,2).join('/')).sort()[0] || '';
           const inferredSelector = cluster ? `a[href^="/${cluster}"]` : 'a';
           linkSelector = inferredSelector;
-          await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), level: 'warn', msg: `Preflight zero matches; fell back to ${linkSelector}` });
+          await log(`Preflight zero matches; fell back to ${linkSelector}`, 'warn');
         }
       }
 
@@ -155,7 +162,7 @@ export default async (req: Request, context: Context) => {
         const href = $(a).attr('href'); if (!href) return;
         try {
           const nxt = normalizeUrl(new URL(href, url).toString());
-          const ok = cfg.sameOriginOnly ? sameOrigin(nxt, cfg.startUrl) : true;
+          const ok = (cfg as StartCfg).sameOriginOnly ? sameOrigin(nxt, (cfg as StartCfg).startUrl) : true;
           if (ok && !visited.has(nxt) && !queued.has(nxt)) { queue.push(nxt); queued.add(nxt); }
         } catch {}
       });
@@ -182,7 +189,7 @@ export default async (req: Request, context: Context) => {
 
   if (matchesTotal) {
     const matchRate = matchesOk / matchesTotal;
-    await appendEvent(jobId, { type: 'log', at: new Date().toISOString(), msg: `Match rate: ${Math.round(matchRate*100)}%` });
+    await log(`Match rate: ${Math.round(matchRate*100)}%`);
   }
   state = await getState(jobId);
   if (state) { state.status = 'finished'; state.finished_at = new Date().toISOString(); await putState(state); }
